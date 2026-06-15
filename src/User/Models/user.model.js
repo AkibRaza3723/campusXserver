@@ -1,5 +1,5 @@
 import mongoose, { Schema } from "mongoose";
-
+import jwt from "jsonwebtoken";
 
 const userSchema = new Schema({
   email: {
@@ -36,6 +36,10 @@ const userSchema = new Schema({
   reputation: {
     type: Number,
     default: 0
+  },
+  refreshToken: {
+    type: String,
+    default: null
   }
 },{timestamps: true})
 
