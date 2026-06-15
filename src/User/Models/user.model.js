@@ -16,9 +16,7 @@ const userSchema = new Schema({
     }
   },
   
-  // OTP Fields
-  otpHash: { type: String, default: null},
-  otpExpiresAt: { type: Date,default: null},
+  // OTP Fields stored at redis in controller for 10 mins...
   
   // Anonymous Profile
   username: { type: String, unique: true,
@@ -42,6 +40,29 @@ const userSchema = new Schema({
     default: null
   }
 },{timestamps: true})
+
+
+userSchema.methods.generateAccessToken = function () {
+    const acesstoken = jwt.sign(
+        {  
+            _id: this._id,
+            email: this.email
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN }
+    );
+    return acesstoken;
+};
+userSchema.methods.generateRefreshToken = function () {
+    const refreshToken = jwt.sign(
+        { 
+            _id: this._id,
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN }
+    );
+    return refreshToken;
+};
 
 
 
