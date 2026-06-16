@@ -1,9 +1,8 @@
 import bcrypt from "bcrypt";
 import crypto from "crypto";
-import redisClient from "../Models/redisclint.js";
 import { User } from "../Models/user.model.js";
-import { sendEmail } from "../../Utils/sendEmail.js";
-import {asyncHandler} from "../../Utils/asyncHandler.js"
+import { sendEmail } from "../../Utils/sendemail.js";
+import { asyncHandler } from "../../Utils/asyncHandler.js"
 
 const requestOtp = asyncHandler(async (req, res) => {
   const { email } = req.body;
