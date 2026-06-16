@@ -8,7 +8,7 @@ import connectDB from "./DB/connect.db.js";
 import {generateH3Cell} from "./Utils/userLocation.js";
 
 const port = process.env.PORT ;
-const server = http.createServer(app);
+const server = http.createServer(app); //to get proper control over server
 const io = new Server(server,{
     cors:{
         origin:"http://localhost:5173",

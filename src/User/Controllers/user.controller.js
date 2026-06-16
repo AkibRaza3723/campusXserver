@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import {redisClient} from "../../Utils/redisclint.js"
 import { User } from "../Models/user.model.js";
 import { sendEmail } from "../../Utils/sendemail.js";
 import { asyncHandler } from "../../Utils/asyncHandler.js"

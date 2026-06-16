@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/AkibRaza3723/campusXserver#readme",
   "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -29,7 +30,6 @@
     "h3-js": "^4.4.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.7.0",
-    "nodemailer": "^9.0.0",
     "redis": "^6.0.0",
     "socket.io": "^4.8.3"
   },

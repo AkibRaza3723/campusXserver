@@ -1,21 +1,13 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 export async function sendEmail({ to, subject, text, html }) {
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM,
+  await sgMail.send({
     to,
+    from: process.env.SENDGRID_FROM_EMAIL,
     subject,
     text,
-    html,
+    html: html || text,
   });
 }
