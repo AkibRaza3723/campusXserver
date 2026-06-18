@@ -4,6 +4,25 @@ import {redisClient} from "../../Utils/redisclint.js"
 import { User } from "../Models/user.model.js";
 import { sendEmail } from "../../Utils/sendemail.js";
 import { asyncHandler } from "../../Utils/asyncHandler.js"
+import jwt from "jsonwebtoken"
+
+import { ApiError } from "../../Utils/resError.js";
+import { ApiRes } from "../../Utils/response.js";
+
+const generateAcessTokenAndRefreshTokens = async(userId) => {
+    try {
+       const user =  await User.findById(userId)
+       const accessToken = user.generateAccessToken()
+       const refreshToken = user.generateRefreshToken()
+ 
+       user.refreshToken = refreshToken; //just find by id kia hai validate krna padege
+       await user.save({validateBeforeSave:false}); //saving refresh token in user schema
+
+       return {accessToken,refreshToken}
+    } catch (error) {
+        throw new ApiError(500,"something went wrong while generating tokens")
+    }
+}
 
 const requestOtp = asyncHandler(async (req, res) => {
   const { email } = req.body;
@@ -152,7 +171,7 @@ const requestOtp = asyncHandler(async (req, res) => {
   });
 
   return res.status(200).json({ message: "OTP sent to your email" });
-})
+}) // we have requested for otp but the user data havn't been send to database (after sucesfully giving username and avatar)
 
 const verifyOtp = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
@@ -181,8 +200,80 @@ const verifyOtp = asyncHandler(async (req, res) => {
     await user.save();
   }
 
-  return res.status(200).json({ message: "OTP verified successfully", userId: user._id });
+  const {accessToken,refreshToken} = await generateAcessTokenAndRefreshTokens(user._id);
+  //isko call krte hi refresh token DB mei gya ab at and rt frontend ko bhej do thorugh cookies
+  const verifiedUser = await User.findById(user._id).select("-refreshToken")
+
+  const options ={
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production"
+    }//for security
+
+  return res.status(200)
+    .cookie("accessToken",accessToken,options)
+    .cookie("refreshToken", refreshToken,options)
+    .json(
+        new ApiRes(200,{user: verifiedUser.toObject(), accessToken, refreshToken}, "user logged in sucesfully")
+    ) //now user have access token and refresh token 
 })
 
+const logOut = asyncHandler(async(req,res)=>{
+     await User.findByIdAndUpdate(
+        req.user._id,
+        {$set:{refreshToken : undefined }},
+        {new: true}
+    ) 
 
-export {requestOtp,verifyOtp}
+    const options ={
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production" 
+    }// for security 
+
+    return res
+    .status(200)
+    .clearCookie("accessToken",options)
+    .clearCookie("refreshToken",options)
+    .json(new ApiRes(200,{},"User logged out"))
+})
+
+const refreshAccessToken = asyncHandler(async(req,res)=>{
+   const incomingRT = req.cookies.refreshToken;
+   if(!incomingRT){
+    throw new ApiError(401,"unauthorized access")
+   }
+   try {
+    const decodedToken = jwt.verify(
+     incomingRT,
+     process.env.REFRESH_TOKEN_SECRET
+    )//cookies mei encoded hota hai database mei decoded
+ 
+    const user = await User.findById(decodedToken?._id)
+    if(!user){
+     throw new ApiError(401,"Invalid refresh token")
+    }
+ 
+    if (incomingRT !== user?.refreshToken) {
+      throw new ApiError(401,"refresh token is expired or used")
+    }// why checking again?
+    
+    const {accessToken, newrefreshToken}=await generateAcessTokenAndRefreshTokens(user._id)
+    const options ={ 
+         httpOnly: true,
+         secure: process.env.NODE_ENV === "production" 
+     }
+     
+     return res
+     .status(200)
+     .cookie("accessToken",accessToken,options)
+     .cookie("refreshToken",newrefreshToken,options)
+     .json( new ApiRes(
+         200,
+         {accessToken,refreshToken:newrefreshToken},
+         "access token refreshed sucessfully"
+     ))
+   } catch (error) {
+     throw new ApiError(401,error?.message||"invalid refresh token - catch")
+   }
+})
+
+export {requestOtp,verifyOtp,logOut,refreshAccessToken}
