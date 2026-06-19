@@ -34,8 +34,20 @@ io.on("connection",(socket)=>{
             console.log("User is in same room")
         }
     });
+    socket.on("join_group",({group})=>{
+        if(socket.currentRoom !== group){
+            const oldRoom = socket.currentRoom;
+            if(oldRoom){
+                socket.leave(oldRoom);
+            }
+            socket.join(group);
+            socket.currentRoom = group;
+        }
+        else{
+            console.log("User is in same room")
+        }
+    });
     socket.on("send_message",({message,id,timestamp})=>{
-        console.log(socket.currentRoom)
         if(socket.currentRoom){
             io.to(socket.currentRoom).emit("recieve_message",{message,id,timestamp});
         }
