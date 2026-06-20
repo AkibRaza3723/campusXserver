@@ -1,13 +1,14 @@
 import bcrypt from "bcrypt";
 import crypto from "crypto";
-import {redisClient} from "../../Utils/redisclint.js"
+import { redis } from "../../DB/connect.redis.js";
 import { User } from "../Models/user.model.js";
 import { sendEmail } from "../../Utils/sendemail.js";
 import { asyncHandler } from "../../Utils/asyncHandler.js"
 import jwt from "jsonwebtoken"
-
 import { ApiError } from "../../Utils/resError.js";
 import { ApiRes } from "../../Utils/response.js";
+import { generateUniqueUserName } from "../../Utils/usernameGenerator.js";
+import { otpKey } from "../../Utils/redisKey.js";
 
 const generateAcessTokenAndRefreshTokens = async(userId) => {
     try {
@@ -26,20 +27,23 @@ const generateAcessTokenAndRefreshTokens = async(userId) => {
 
 const requestOtp = asyncHandler(async (req, res) => {
   const { email } = req.body;
-
+  const emailRegex = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
   if (!email) {
-    return res.status(400).json({ message: "Email is required" });
+    return res.status(400).json(new ApiError(400,"Email is required"));
+  }
+  if(!emailRegex.test(email)){
+    return res.status(400).json(new ApiError(400,"Email is invalid"));
   }
 
   const plainTextOtp = crypto.randomInt(100000, 999999).toString();
   const hashedOtp = await bcrypt.hash(plainTextOtp, 10);
 
-  await redisClient.set(`otp:${email}`, hashedOtp, { EX: 600 });
+  await redis.set(`${otpKey(email)}`, hashedOtp, "EX",300);
 
   await sendEmail({
   to: email,
   subject: "Your OTP code",
-  text: `Your OTP is ${plainTextOtp}. It expires in 10 minutes.`,
+  text: `Your OTP is ${plainTextOtp}. It expires in 5 minutes.`,
   html: `<!DOCTYPE html>
         <html>
         <head>
@@ -171,30 +175,30 @@ const requestOtp = asyncHandler(async (req, res) => {
   });
 
   return res.status(200).json({ message: "OTP sent to your email" });
-}) // we have requested for otp but the user data havn't been send to database (after sucesfully giving username and avatar)
+}) 
 
 const verifyOtp = asyncHandler(async (req, res) => {
   const { email, otp } = req.body;
-
+  const username = await generateUniqueUserName();
   if (!email || !otp) {
     return res.status(400).json({ message: "Email and OTP are required" });
   }
 
-  const storedHash = await redisClient.get(`otp:${email}`);
+  const storedHash = await redis.get(`${otpKey(email)}`);
   if (!storedHash) {
     return res.status(400).json({ message: "OTP is invalid or has expired" });
   }
 
   const isValidOtp = await bcrypt.compare(otp, storedHash);
   if (!isValidOtp) {
-    return res.status(401).json({ message: "Invalid OTP" });
+    return res.status(400).json({ message: "Invalid OTP" });
   }
 
-  await redisClient.del(`otp:${email}`);
+  await redis.del(`${otpKey(email)}`);
 
   let user = await User.findOne({ email });
   if (!user) {
-    user = await User.create({ email, isVerified: true });
+    user = await User.create({ email, username,isVerified: true });
   } else if (!user.isVerified) {
     user.isVerified = true;
     await user.save();
@@ -206,11 +210,13 @@ const verifyOtp = asyncHandler(async (req, res) => {
 
   const options ={
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production"
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 1000 * 60 * 60*24*10 //8days
     }//for security
 
   return res.status(200)
-    .cookie("accessToken",accessToken,options)
+    .cookie("accessToken",accessToken,{...options, maxAge: 1000 * 60 * 60*15})
     .cookie("refreshToken", refreshToken,options)
     .json(
         new ApiRes(200,{user: verifiedUser.toObject(), accessToken, refreshToken}, "user logged in sucesfully")
@@ -239,32 +245,34 @@ const logOut = asyncHandler(async(req,res)=>{
 const refreshAccessToken = asyncHandler(async(req,res)=>{
    const incomingRT = req.cookies.refreshToken;
    if(!incomingRT){
-    throw new ApiError(401,"unauthorized access")
+    return res.status(401).json(new ApiError(401,"required to sign in"))
    }
    try {
     const decodedToken = jwt.verify(
      incomingRT,
      process.env.REFRESH_TOKEN_SECRET
-    )//cookies mei encoded hota hai database mei decoded
+    )
  
     const user = await User.findById(decodedToken?._id)
     if(!user){
-     throw new ApiError(401,"Invalid refresh token")
+     return res.status(401).json(new ApiError(401,"unauthorized access"))
     }
  
     if (incomingRT !== user?.refreshToken) {
-      throw new ApiError(401,"refresh token is expired or used")
+      return res.status(401).json(new ApiError(401,"refresh token is expired or used"))
     }// why checking again?
     
     const {accessToken, newrefreshToken}=await generateAcessTokenAndRefreshTokens(user._id)
     const options ={ 
          httpOnly: true,
-         secure: process.env.NODE_ENV === "production" 
+         secure: process.env.NODE_ENV === "production" ,//is only sended in https not in http
+         sameSite: "lax",
+         maxAge: 1000 * 60 * 60 * 24 * 10 //10d
      }
      
      return res
      .status(200)
-     .cookie("accessToken",accessToken,options)
+     .cookie("accessToken",accessToken,{...options,maxAge: 1000 * 60 * 15})//15m
      .cookie("refreshToken",newrefreshToken,options)
      .json( new ApiRes(
          200,

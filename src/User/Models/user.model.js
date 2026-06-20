@@ -20,7 +20,8 @@ const userSchema = new Schema({
   
   // Anonymous Profile
   username: { type: String, unique: true,
-    sparse: true, // Allows nulls to be ignored by the unique index before onboarding
+    sparse: true,
+    required: true, // Allows nulls to be ignored by the unique index before onboarding
     trim: true 
   },
   avatar: {

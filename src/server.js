@@ -6,9 +6,10 @@ import http from "http";
 import {Server} from "socket.io";
 import connectDB from "./DB/connect.db.js";
 import {generateH3Cell} from "./Utils/userLocation.js";
-
+import {connectRedis} from "./DB/connect.redis.js";
 const port = process.env.PORT ;
 const server = http.createServer(app); //to get proper control over server
+
 const io = new Server(server,{
     cors:{
         origin:"http://localhost:5173",
@@ -63,6 +64,7 @@ io.on("connection",(socket)=>{
 
 connectDB()
     .then(() => {
+        connectRedis();
         server.listen(port, () => {
             console.log(`Server is running on port ${port}`);
         });

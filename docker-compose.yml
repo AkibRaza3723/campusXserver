@@ -1,0 +1,19 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server","--appendonly","yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - campusx
+
+ 
+networks:
+  campusx:
+    driver: bridge
+
+volumes:
+  redis_data:
