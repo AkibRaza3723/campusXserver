@@ -7,7 +7,7 @@ const generateUniqueUserName = async () =>{
     const ANIMAL_INDEX = Math.floor(Math.random() * ANIMALS.length);
 
     const UNIQUE_USER_NAME = `${ADJECTIVES[ADJECTIVE_INDEX]}_${ANIMALS[ANIMAL_INDEX]}`;
-    const exits = await redis.sadd("usernames",UNIQUE_USER_NAME);
+    const exist = await redis.sadd("usernames",UNIQUE_USER_NAME);
     if(exits === 0){
         return generateUniqueUserName();
     }

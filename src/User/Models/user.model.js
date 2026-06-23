@@ -8,12 +8,6 @@ const userSchema = new Schema({
     unique: true,
     lowercase: true,
     trim: true,
-    validate: {
-      validator: function(v) {
-        return v.endsWith('ietlucknow.ac.in') || v.endsWith('st.jmi.ac.in');
-      },
-      message: props => `${props.value} is not a valid college email!`
-    }
   },
   
   // OTP Fields stored at redis in controller for 10 mins...
@@ -37,8 +31,8 @@ const userSchema = new Schema({
     default: 0
   },
   refreshToken: {
-    type: String,
-    default: null
+    type: [String],
+    default: [],
   }
 },{timestamps: true})
 

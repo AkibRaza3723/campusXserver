@@ -9,42 +9,64 @@ import { ApiError } from "../../Utils/resError.js";
 import { ApiRes } from "../../Utils/response.js";
 import { generateUniqueUserName } from "../../Utils/usernameGenerator.js";
 import { otpKey } from "../../Utils/redisKey.js";
+import verifiedEmail from "../../Utils/verifiedEmail.js";
 
-const generateAcessTokenAndRefreshTokens = async(userId) => {
+const generateAcessTokenAndRefreshTokens = async (userId, oldRefreshToken = null) => {
     try {
-       const user =  await User.findById(userId)
-       const accessToken = user.generateAccessToken()
-       const refreshToken = user.generateRefreshToken()
- 
-       user.refreshToken = refreshToken; //just find by id kia hai validate krna padege
-       await user.save({validateBeforeSave:false}); //saving refresh token in user schema
+        const user = await User.findById(userId)
+        const accessToken = user.generateAccessToken()
+        const refreshToken = user.generateRefreshToken()
 
-       return {accessToken,refreshToken}
+        if (!Array.isArray(user.refreshToken)) {
+            user.refreshToken = [];
+        }
+
+        if (oldRefreshToken) {
+            // Find index of the old token and replace it for rotation
+            const tokenIndex = user.refreshToken.indexOf(oldRefreshToken);
+            if (tokenIndex > -1) {
+                user.refreshToken[tokenIndex] = refreshToken;
+            } else {
+                user.refreshToken.push(refreshToken);//if any error occured or mysteriously oldrefreshtoken is deleted(safegaurd)
+            }
+        } else {
+            // New login, push it
+            user.refreshToken.push(refreshToken);
+        }
+
+        // Catch-all overflow check: ensure the array NEVER exceeds 2 elements
+        while (user.refreshToken.length > 2) {
+            user.refreshToken.shift();
+        }
+
+        await user.save({ validateBeforeSave: false }); //saving refresh token in user schema
+
+        return { accessToken, refreshToken }
     } catch (error) {
-        throw new ApiError(500,"something went wrong while generating tokens")
+        throw new ApiError(500, "something went wrong while generating tokens")
     }
 }
 
 const requestOtp = asyncHandler(async (req, res) => {
-  const { email } = req.body;
-  const emailRegex = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
-  if (!email) {
-    return res.status(400).json(new ApiError(400,"Email is required"));
-  }
-  if(!emailRegex.test(email)){
-    return res.status(400).json(new ApiError(400,"Email is invalid"));
-  }
+    const { email } = req.body;
 
-  const plainTextOtp = crypto.randomInt(100000, 999999).toString();
-  const hashedOtp = await bcrypt.hash(plainTextOtp, 10);
+    if (!email) {
+        return res.status(400).json(new ApiError(400, "Email is required"));
+    }
+    if (!verifiedEmail(email)) {
+        return res.status(400).json(new ApiError(400, "Email is invalid"));
+    }
 
-  await redis.set(`${otpKey(email)}`, hashedOtp, "EX",300);
+    const plainTextOtp = crypto.randomInt(100000, 999999).toString();
+    const hashedOtp = await bcrypt.hash(plainTextOtp, 10);
 
-  await sendEmail({
-  to: email,
-  subject: "Your OTP code",
-  text: `Your OTP is ${plainTextOtp}. It expires in 5 minutes.`,
-  html: `<!DOCTYPE html>
+    await redis.set(`${otpKey(email)}`, hashedOtp, "EX", 300);
+
+    await sendEmail({
+        to: email,
+        subject: "Your OTP code",
+        text: `Your OTP is ${plainTextOtp}. It expires in 5 minutes.`,
+        html: `<!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
@@ -172,116 +194,126 @@ const requestOtp = asyncHandler(async (req, res) => {
         </body>
         </html>
       `,
-  });
+    });
 
-  return res.status(200).json({ message: "OTP sent to your email" });
-}) 
+    return res.status(200).json({ message: "OTP sent to your email" });
+})
 
 const verifyOtp = asyncHandler(async (req, res) => {
-  const { email, otp } = req.body;
-  const username = await generateUniqueUserName();
-  if (!email || !otp) {
-    return res.status(400).json({ message: "Email and OTP are required" });
-  }
+    const { email, otp } = req.body;
+    const username = await generateUniqueUserName();
+    if (!email || !otp) {
+        return res.status(400).json(new ApiError(400, "Email and OTP are required"));
+    }
+    if (!verifiedEmail(email)) {
+        return res.status(400).json(new ApiError(400, "Email is invalid"));
+    }
 
-  const storedHash = await redis.get(`${otpKey(email)}`);
-  if (!storedHash) {
-    return res.status(400).json({ message: "OTP is invalid or has expired" });
-  }
+    const storedHash = await redis.get(`${otpKey(email)}`);
+    if (!storedHash) {
+        return res.status(400).json(new ApiError(400, "OTP is invalid or has expired"));
+    }
 
-  const isValidOtp = await bcrypt.compare(otp, storedHash);
-  if (!isValidOtp) {
-    return res.status(400).json({ message: "Invalid OTP" });
-  }
+    const isValidOtp = await bcrypt.compare(otp, storedHash);
+    if (!isValidOtp) {
+        return res.status(400).json(new ApiError(400, "Invalid OTP"));
+    }
 
-  await redis.del(`${otpKey(email)}`);
+    await redis.del(`${otpKey(email)}`);
 
-  let user = await User.findOne({ email });
-  if (!user) {
-    user = await User.create({ email, username,isVerified: true });
-  } else if (!user.isVerified) {
-    user.isVerified = true;
-    await user.save();
-  }
+    let user = await User.findOne({ email });
+    if (!user) {
+        user = await User.create({ email, username, isVerified: true });
+    } else if (!user.isVerified) {
+        user.isVerified = true;
+        await user.save();
+    }
 
-  const {accessToken,refreshToken} = await generateAcessTokenAndRefreshTokens(user._id);
-  //isko call krte hi refresh token DB mei gya ab at and rt frontend ko bhej do thorugh cookies
-  const verifiedUser = await User.findById(user._id).select("-refreshToken")
+    const { accessToken, refreshToken } = await generateAcessTokenAndRefreshTokens(user._id);
+    //isko call krte hi refresh token DB mei gya ab at and rt frontend ko bhej do thorugh cookies
+    const verifiedUser = await User.findById(user._id).select("-refreshToken")
 
-  const options ={
+    const options = {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        maxAge: 1000 * 60 * 60*24*10 //8days
+        maxAge: 1000 * 60 * 60 * 24 * 10 //8days
     }//for security
 
-  return res.status(200)
-    .cookie("accessToken",accessToken,{...options, maxAge: 1000 * 60 * 60*15})
-    .cookie("refreshToken", refreshToken,options)
-    .json(
-        new ApiRes(200,{user: verifiedUser.toObject(), accessToken, refreshToken}, "user logged in sucesfully")
-    ) //now user have access token and refresh token 
+    return res.status(200)
+        .cookie("accessToken", accessToken, { ...options, maxAge: 1000 * 60 * 60 * 15 })
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiRes(200, { user: verifiedUser.toObject(), accessToken, refreshToken }, "user logged in sucesfully")
+        ) //now user have access token and refresh token 
 })
 
-const logOut = asyncHandler(async(req,res)=>{
-     await User.findByIdAndUpdate(
-        req.user._id,
-        {$set:{refreshToken : undefined }},
-        {new: true}
-    ) 
+const logOut = asyncHandler(async (req, res) => {
+    const incomingRT = req.cookies?.refreshToken;
 
-    const options ={
+    // We only pull the specific token from the array to log out from THIS device
+    const updateQuery = incomingRT ? { $pull: { refreshToken: incomingRT } } : {}; //ternary operator one line if else
+
+    await User.findByIdAndUpdate(
+        req.user._id,
+        updateQuery,
+        { new: true }
+    )
+
+    const options = {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production" 
+        secure: process.env.NODE_ENV === "production"
     }// for security 
 
     return res
-    .status(200)
-    .clearCookie("accessToken",options)
-    .clearCookie("refreshToken",options)
-    .json(new ApiRes(200,{},"User logged out"))
+        .status(200)
+        .clearCookie("accessToken", options)
+        .clearCookie("refreshToken", options)
+        .json(new ApiRes(200, {}, "User logged out"))
 })
 
-const refreshAccessToken = asyncHandler(async(req,res)=>{
-   const incomingRT = req.cookies.refreshToken;
-   if(!incomingRT){
-    return res.status(401).json(new ApiError(401,"required to sign in"))
-   }
-   try {
-    const decodedToken = jwt.verify(
-     incomingRT,
-     process.env.REFRESH_TOKEN_SECRET
-    )
- 
-    const user = await User.findById(decodedToken?._id)
-    if(!user){
-     return res.status(401).json(new ApiError(401,"unauthorized access"))
+const regenerateAccessToken = asyncHandler(async (req, res) => {
+    const incomingRT = req.cookies.refreshToken;
+    if (!incomingRT) {
+        return res.status(401).json(new ApiError(401, "required to sign in"))
     }
- 
-    if (incomingRT !== user?.refreshToken) {
-      return res.status(401).json(new ApiError(401,"refresh token is expired or used"))
-    }// why checking again?
-    
-    const {accessToken, newrefreshToken}=await generateAcessTokenAndRefreshTokens(user._id)
-    const options ={ 
-         httpOnly: true,
-         secure: process.env.NODE_ENV === "production" ,//is only sended in https not in http
-         sameSite: "lax",
-         maxAge: 1000 * 60 * 60 * 24 * 10 //10d
-     }
-     
-     return res
-     .status(200)
-     .cookie("accessToken",accessToken,{...options,maxAge: 1000 * 60 * 15})//15m
-     .cookie("refreshToken",newrefreshToken,options)
-     .json( new ApiRes(
-         200,
-         {accessToken,refreshToken:newrefreshToken},
-         "access token refreshed sucessfully"
-     ))
-   } catch (error) {
-     throw new ApiError(401,error?.message||"invalid refresh token - catch")
-   }
+    try {
+        const decodedToken = jwt.verify(
+            incomingRT,
+            process.env.REFRESH_TOKEN_SECRET
+        )
+
+        const user = await User.findById(decodedToken?._id)//we are providing _id of user when generating tokens in user.model.js
+        if (!user) {
+            return res.status(401).json(new ApiError(401, "unauthorized access"))
+        }
+
+        // Check if the incomingRT exists in the array instead of string comparison
+        if (!user.refreshToken || !user.refreshToken.includes(incomingRT)) {
+            return res.status(401).json(new ApiError(401, "refresh token is expired or used"))
+        }
+
+        // Pass the incomingRT to explicitly rotate ONLY that token
+        const { accessToken, refreshToken: newrefreshToken } = await generateAcessTokenAndRefreshTokens(user._id, incomingRT)
+        const options = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",//is only sended in https not in http
+            sameSite: "lax",
+            maxAge: 1000 * 60 * 60 * 24 * 10 //10d
+        }
+
+        return res
+            .status(200)
+            .cookie("accessToken", accessToken, { ...options, maxAge: 1000 * 60 * 15 })//15m
+            .cookie("refreshToken", newrefreshToken, options)
+            .json(new ApiRes(
+                200,
+                { accessToken, refreshToken: newrefreshToken },
+                "access token refreshed sucessfully"
+            ))
+    } catch (error) {
+        throw new ApiError(401, error?.message || "invalid refresh token - catch")
+    }
 })
 
-export {requestOtp,verifyOtp,logOut,refreshAccessToken}
+export { requestOtp, verifyOtp, logOut, regenerateAccessToken }
