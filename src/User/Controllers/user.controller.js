@@ -315,5 +315,8 @@ const regenerateAccessToken = asyncHandler(async (req, res) => {
         throw new ApiError(401, error?.message || "invalid refresh token - catch")
     }
 })
+const getCurrentUser = asyncHandler(async (req, res) => {
+    return res.status(200).json(new ApiRes(200, req.user, "current user fetch sucessfully"))
+})
 
-export { requestOtp, verifyOtp, logOut, regenerateAccessToken }
+export { requestOtp, verifyOtp, logOut, regenerateAccessToken, getCurrentUser }
