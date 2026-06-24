@@ -121,3 +121,7 @@ dist
 .pnp.*
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#Node
+
+# Public Temp folder for multer uploads
+public/temp/*
+!public/temp/.gitkeep
